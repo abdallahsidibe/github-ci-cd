@@ -1,0 +1,127 @@
+name: CI/CD pipeline for a web application
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branche à déployer (optionnel)'
+        required: false
+        default: 'main'
+
+jobs: 
+  build:
+    runs-on: ubuntu-latest
+
+### CI – Continuous Integration ####
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+      - name: Install dependencies
+        working-directory: app
+        run: npm install
+
+    #  - name: Run unit tests
+     #        env:
+     #     DATABASE_URL: "mock://database"
+     #     JWT_SECRET: supersecretkey
+     #     NODE_ENV: test
+    #  run: |
+    #   npm test
+
+      - name: Run ESLint
+        working-directory: app
+        run: npm run lint || true
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        with:
+          projectBaseDir: app
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+  Artifacts:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKER_PROJECT_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
+    
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+### CD – Continuous Deployment ####
+
+  Deploy:
+    needs: Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Install Heroku CLI
+        run: |
+          curl https://cli-assets.heroku.com/install.sh | sh
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Heroku Container Registry
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: heroku container:login
+
+      - name: Pull from Docker Hub and Push to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          
+          docker pull ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKER_PROJECT_NAME }}:latest
+          
+          
+          docker tag ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKER_PROJECT_NAME }}:latest registry.heroku.com/${{ vars.HEROKU_APP_NAME }}/web
+          
+          # 3. Pousser vers Heroku
+          docker push registry.heroku.com/${{ vars.HEROKU_APP_NAME }}/web
+
+      - name: Release to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: heroku stack:set container --app ${{ vars.HEROKU_APP_NAME }}

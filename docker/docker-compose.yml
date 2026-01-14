@@ -1,0 +1,33 @@
+services:
+  app:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    image: student-ci-cd-app:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/realworld?schema=public
+      JWT_SECRET: supersecret_dev_value
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    # If your app needs to run migrations or seed data on startup, uncomment below
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/api/main.js"]
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: realworld
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5437:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
